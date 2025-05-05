@@ -1,0 +1,558 @@
+const express = require('express');
+const router = express.Router();
+const Order = require('../models/Order');
+const User = require('../models/User');
+const { protect, admin } = require('../middleware/auth');
+
+// GET all orders (admin only)
+router.get('/', protect, admin, async (req, res) => {
+  try {
+    const { status, limit = 10, page = 1 } = req.query;
+    
+    const query = {};
+    
+    if (status) {
+      query.status = status;
+    }
+    
+    // For MySQL we need to use options object instead of chaining
+    const options = {
+      limit: parseInt(limit),
+      skip: (parseInt(page) - 1) * parseInt(limit),
+      sort: 'created_at DESC',
+      populate: ['user']
+    };
+    
+    // Get orders with pagination
+    const orders = await Order.find(query, options);
+    
+    // Count total orders for pagination
+    const total = await Order.countDocuments(query);
+    
+    res.status(200).json({
+      orders,
+      page: parseInt(page),
+      pages: Math.ceil(total / parseInt(limit)),
+      total
+    });
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET dashboard stats (admin only)
+router.get('/stats', protect, admin, async (req, res) => {
+  try {
+    const totalOrders = await Order.countDocuments();
+    const pendingOrders = await Order.countDocuments({ status: 'pending' });
+    const processingOrders = await Order.countDocuments({ status: 'processing' });
+    const shippedOrders = await Order.countDocuments({ status: 'shipped' });
+    const deliveredOrders = await Order.countDocuments({ status: 'delivered' });
+    
+    // Calculate total revenue from all paid orders
+    const paidOrders = await Order.find({ isPaid: true }, { limit: 1000 }); // Add limit to avoid potential issues
+    const totalRevenue = paidOrders.reduce((sum, order) => sum + parseFloat(order.totalPrice || 0), 0);
+    
+    // Get recent orders with user info
+    const recentOrders = await Order.find({}, { 
+      limit: 5, 
+      sort: 'created_at DESC',
+      populate: ['user']
+    });
+      
+    // For MySQL we can't use MongoDB's aggregation pipeline
+    // Instead, we'll generate sample data for now (in production, this would be a proper SQL query)
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
+    // Get current month
+    const currentMonth = new Date().getMonth();
+    const currentYear = new Date().getFullYear();
+    
+    // Generate last 6 months' labels
+    const labels = [];
+    for (let i = 5; i >= 0; i--) {
+      let month = currentMonth - i;
+      if (month < 0) month += 12;
+      labels.push(monthNames[month]);
+    }
+    
+    // Generate sample data based on total revenue
+    // In a real implementation, we would query the DB for monthly data
+    const baseRevenue = totalRevenue > 0 ? totalRevenue / 6 : 1000;
+    const data = [
+      baseRevenue * 0.7, 
+      baseRevenue * 0.8, 
+      baseRevenue * 0.9, 
+      baseRevenue * 1.1, 
+      baseRevenue * 1.2, 
+      baseRevenue * 1.3
+    ];
+    
+    const monthlyRevenue = {
+      labels: labels,
+      data: data
+    };
+    
+    res.status(200).json({
+      stats: {
+        totalOrders,
+        pendingOrders,
+        processingOrders,
+        shippedOrders,
+        deliveredOrders,
+        totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+      },
+      recentOrders,
+      monthlyRevenue
+    });
+  } catch (error) {
+    console.error('Error fetching order stats:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET user orders (protected)
+router.get('/myorders', protect, async (req, res) => {
+  try {
+    const orders = await Order.find({ user: req.user._id }).sort({ createdAt: -1 });
+    
+    res.status(200).json(orders);
+  } catch (error) {
+    console.error('Error fetching user orders:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET a single order by ID (allow public access for order confirmation)
+router.get('/:id', async (req, res) => {
+  try {
+    // For MySQL, populate is handled differently
+    const order = await Order.findById(req.params.id);
+    
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+    
+    // Check if user is allowed to see this order (admin or order owner)
+    // Only do the authorization check if the request has a user (authenticated)
+    if (req.user) {
+      if (req.user.role !== 'admin' && order.user && order.user._id.toString() !== req.user._id.toString()) {
+        return res.status(403).json({ message: 'Not authorized to access this order' });
+      }
+    }
+    
+    res.status(200).json(order);
+  } catch (error) {
+    console.error('Error fetching order:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// POST create a new order
+router.post('/', async (req, res) => {
+  try {
+    const {
+      orderItems,
+      shippingAddress,
+      paymentMethod,
+      itemsPrice,
+      taxPrice,
+      shippingPrice,
+      totalPrice,
+      status = 'pending',
+      userId
+    } = req.body;
+    
+    if (!orderItems || orderItems.length === 0) {
+      return res.status(400).json({ message: 'No order items' });
+    }
+    
+    console.log('Creating order with data:', JSON.stringify({
+      orderItems: orderItems.length,
+      shippingAddress: !!shippingAddress,
+      paymentMethod,
+      itemsPrice,
+      taxPrice,
+      shippingPrice,
+      totalPrice
+    }));
+    
+    // For MySQL we use the Order.create static method
+    const orderData = {
+      user: req.user ? req.user.id : (userId || null), // Allow guest checkout, use authenticated user if available
+      orderItems: orderItems,
+      shippingAddress: shippingAddress,
+      paymentMethod: paymentMethod,
+      itemsPrice: itemsPrice || 0,
+      taxPrice: taxPrice || 0,
+      shippingPrice: shippingPrice || 0,
+      totalPrice: totalPrice || 0,
+      status: status
+    };
+    
+    const createdOrder = await Order.create(orderData);
+    
+    if (!createdOrder) {
+      throw new Error('Failed to create order in database');
+    }
+    
+    // If user is logged in, add the order to their orders array
+    // This needs to be implemented differently for MySQL
+    // For now, we'll skip this step as the user-order relationship 
+    // is already established in the orders table
+    
+    // Check if the order has any items with uploaded files and manually link them
+    try {
+      const pool = require('../config/db').getPool();
+      if (pool) {
+        for (const item of orderData.orderItems || []) {
+          // If item has customOptions with uploadedFileId, update the file's order_id
+          if (item.customOptions && item.customOptions.uploadedFileId) {
+            console.log(`Linking uploaded file ${item.customOptions.uploadedFileId} to order ${createdOrder.id}`);
+            
+            try {
+              // Check if the file exists first
+              const [checkResult] = await pool.query(
+                'SELECT id, order_id FROM uploaded_files WHERE id = ?',
+                [item.customOptions.uploadedFileId]
+              );
+              
+              if (checkResult.length === 0) {
+                console.error(`File ID ${item.customOptions.uploadedFileId} not found in the database`);
+              } else {
+                console.log(`File found. Current order_id:`, checkResult[0].order_id);
+                
+                // Check if the file is already associated with another order
+                if (checkResult[0].order_id && checkResult[0].order_id != createdOrder.id) {
+                  console.warn(`⚠️ UPLOADING: File ${item.customOptions.uploadedFileId} already associated with order ${checkResult[0].order_id}, not changing association`);
+                } else {
+                  // Update the file's order_id and mark as permanent (non-temporary)
+                  const [updateResult] = await pool.query(
+                    'UPDATE uploaded_files SET order_id = ?, temporary = 0 WHERE id = ?',
+                    [createdOrder.id, item.customOptions.uploadedFileId]
+                  );
+                  
+                  console.log(`File update result: rows affected=${updateResult.affectedRows}`);
+                  
+                  // Verify the update worked
+                  const [verifyResult] = await pool.query(
+                    'SELECT id, order_id FROM uploaded_files WHERE id = ?',
+                    [item.customOptions.uploadedFileId]
+                  );
+                  
+                  if (verifyResult.length > 0) {
+                    console.log(`File verification: order_id is now ${verifyResult[0].order_id}`);
+                    if (verifyResult[0].order_id != createdOrder.id) {
+                      console.error(`WARNING: File order_id (${verifyResult[0].order_id}) doesn't match expected value (${createdOrder.id})`);
+                    }
+                  } else {
+                    console.error(`Verification failed: File ${item.customOptions.uploadedFileId} not found after update`);
+                  }
+                }
+              }
+            } catch (updateError) {
+              console.error(`Failed to link file ${item.customOptions.uploadedFileId} to order:`, updateError);
+            }
+          }
+        }
+      }
+    } catch (linkingError) {
+      console.error('Error linking files to order:', linkingError);
+      // Don't fail the order creation if linking fails
+    }
+    
+    console.log('Order created successfully:', createdOrder.id);
+    res.status(201).json(createdOrder);
+  } catch (error) {
+    console.error('Error creating order:', error);
+    res.status(500).json({ message: error.message || 'Server error' });
+  }
+});
+
+// PUT update order status (admin only)
+router.put('/:id/status', protect, admin, async (req, res) => {
+  try {
+    const { status } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({ message: 'Status is required' });
+    }
+    
+    const order = await Order.findById(req.params.id);
+    
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+    
+    order.status = status;
+    
+    if (status === 'delivered') {
+      order.isDelivered = true;
+      order.deliveredAt = Date.now();
+    }
+    
+    const updatedOrder = await order.save();
+    
+    res.status(200).json(updatedOrder);
+  } catch (error) {
+    console.error('Error updating order status:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// PUT update order to paid
+router.put('/:id/pay', async (req, res) => {
+  try {
+    const { paymentResult } = req.body;
+    
+    const order = await Order.findById(req.params.id);
+    
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+    
+    order.isPaid = true;
+    order.paidAt = Date.now();
+    order.status = 'processing';
+    order.paymentResult = paymentResult || {
+      id: 'sample_payment_id',
+      status: 'completed',
+      update_time: Date.now(),
+      email_address: order.shippingAddress.email
+    };
+    
+    const updatedOrder = await order.save();
+    
+    res.status(200).json(updatedOrder);
+  } catch (error) {
+    console.error('Error updating order payment:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// PUT update tracking information (admin only)
+router.put('/:id/tracking', protect, admin, async (req, res) => {
+  try {
+    const { trackingNumber, estimatedDeliveryDate } = req.body;
+    
+    const order = await Order.findById(req.params.id);
+    
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+    
+    order.trackingNumber = trackingNumber;
+    order.estimatedDeliveryDate = estimatedDeliveryDate;
+    order.status = 'shipped';
+    
+    const updatedOrder = await order.save();
+    
+    res.status(200).json(updatedOrder);
+  } catch (error) {
+    console.error('Error updating tracking information:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// POST associate files with an order (admin only)
+router.post('/:id/files', protect, admin, async (req, res) => {
+  try {
+    const { fileIds } = req.body;
+    const { id } = req.params;
+    
+    if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
+      return res.status(400).json({ message: 'File IDs array is required' });
+    }
+    
+    // Get the pool directly for direct SQL operations
+    const pool = require('../config/db').getPool();
+    if (!pool) {
+      return res.status(500).json({ message: 'Database connection not available' });
+    }
+    
+    // Verify the order exists
+    const order = await Order.findById(id);
+    if (!order) {
+      return res.status(404).json({ message: 'Order not found' });
+    }
+    
+    // Start transaction
+    const connection = await pool.getConnection();
+    await connection.beginTransaction();
+    
+    try {
+      // Associate each file with the order
+      const updatedFiles = [];
+      const orderItems = [];
+      
+      // Get only items that are likely for custom designs based on product category
+      // or items without a product ID (completely custom)
+      const [itemsResult] = await connection.query(
+        `SELECT oi.id 
+         FROM order_items oi
+         LEFT JOIN products p ON oi.product_id = p.id
+         WHERE oi.order_id = ? 
+         AND (p.category IN ('3d-printing', 'laser-engraving', 'custom') OR oi.product_id IS NULL)
+         LIMIT 1`,
+        [id]
+      );
+      
+      if (itemsResult.length > 0) {
+        // Only get the custom item
+        orderItems.push(itemsResult[0].id);
+        console.log(`Found customizable order item ${itemsResult[0].id} for file association`);
+      } else {
+        console.log(`No customizable items found for order ${id}, skipping custom options update`);
+      }
+      
+      for (const fileId of fileIds) {
+        // First verify the file exists
+        const [fileResult] = await connection.query(
+          'SELECT id FROM uploaded_files WHERE id = ?',
+          [fileId]
+        );
+        
+        if (fileResult.length === 0) {
+          console.warn(`File ID ${fileId} not found, skipping`);
+          continue;
+        }
+        
+        // Update the file record to associate with the order and mark as permanent
+        const [updateResult] = await connection.query(
+          'UPDATE uploaded_files SET order_id = ?, temporary = 0 WHERE id = ?',
+          [id, fileId]
+        );
+        
+        if (updateResult.affectedRows > 0) {
+          console.log(`Associated file ID ${fileId} with order ID ${id}`);
+          updatedFiles.push(fileId);
+          
+          // Now update the order_custom_options if there's an order item
+          if (orderItems.length > 0) {
+            // Check if there's already a record in order_custom_options for this item
+            const [optionsResult] = await connection.query(
+              'SELECT id FROM order_custom_options WHERE order_item_id = ?',
+              [orderItems[0]]
+            );
+            
+            if (optionsResult.length > 0) {
+              // Update existing record
+              await connection.query(
+                'UPDATE order_custom_options SET uploaded_file_id = ? WHERE id = ?',
+                [fileId, optionsResult[0].id]
+              );
+              console.log(`Updated order_custom_options ID ${optionsResult[0].id} with file ID ${fileId}`);
+            } else {
+              // Insert new record
+              await connection.query(
+                'INSERT INTO order_custom_options (order_item_id, uploaded_file_id) VALUES (?, ?)',
+                [orderItems[0], fileId]
+              );
+              console.log(`Created new order_custom_options for item ID ${orderItems[0]} with file ID ${fileId}`);
+            }
+          } else {
+            console.warn(`No order items found for order ID ${id}, skipping order_custom_options update`);
+          }
+        } else {
+          console.warn(`Failed to update file ID ${fileId}`);
+        }
+      }
+      
+      // Commit transaction
+      await connection.commit();
+      
+      // Get the updated files (using the UploadedFile model would be cleaner, but this will work directly)
+      const [files] = await pool.query(
+        'SELECT * FROM uploaded_files WHERE order_id = ?',
+        [id]
+      );
+      
+      res.json({ 
+        message: `${updatedFiles.length} files associated with order ${id} successfully`,
+        files
+      });
+    } catch (error) {
+      // Rollback transaction on error
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  } catch (error) {
+    console.error(`Error associating files with order ${req.params.id}:`, error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET files associated with an order
+router.get('/:id/files', async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    
+    if (!orderId) {
+      return res.status(400).json({ message: 'Order ID is required' });
+    }
+    
+    // Get the uploaded files model
+    const UploadedFile = require('../models/UploadedFile');
+    
+    // Find files associated with this order - ensure order_id is an exact match
+    console.log(`Finding files with order_id = ${orderId}`);
+    const files = await UploadedFile.find({ order_id: orderId }, { populate: ['user'] });
+    
+    // Double check that all files have the correct order_id
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].order_id != orderId) {
+        console.warn(`File ${files[i].id} has incorrect order_id: ${files[i].order_id} vs ${orderId}`);
+        files[i].order_id = orderId; // Correct it for this response
+      }
+    }
+    
+    // Also check for files associated via order_custom_options
+    const pool = require('../config/db').getPool();
+    if (pool) {
+      // Get files linked through order_custom_options but not directly in uploaded_files
+      const [linkedFileIds] = await pool.query(`
+        SELECT oco.uploaded_file_id 
+        FROM order_custom_options oco
+        JOIN order_items oi ON oco.order_item_id = oi.id
+        WHERE oi.order_id = ? AND oco.uploaded_file_id IS NOT NULL
+      `, [orderId]);
+      
+      // If we found any files through order_custom_options, merge them with the direct files
+      if (linkedFileIds.length > 0) {
+        // Extract the IDs
+        const fileIds = linkedFileIds.map(row => row.uploaded_file_id);
+        
+        // We need to also update the uploaded_files table to ensure the relationship is bidirectional
+        for (const fileId of fileIds) {
+          // Check if this file is already in our files list
+          const fileExists = files.some(file => file.id == fileId);
+          
+          if (!fileExists) {
+            // Update the file to include the order_id reference
+            await pool.query(
+              'UPDATE uploaded_files SET order_id = ? WHERE id = ? AND (order_id IS NULL OR order_id != ?)',
+              [orderId, fileId, orderId]
+            );
+            
+            // Get the file details and add to our result set
+            const file = await UploadedFile.findById(fileId);
+            if (file) {
+              await file.populateUser();
+              files.push(file);
+            }
+          }
+        }
+      }
+    }
+    
+    res.status(200).json(files);
+  } catch (error) {
+    console.error(`Error getting files for order ${req.params.id}:`, error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+module.exports = router;

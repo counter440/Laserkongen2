@@ -1,0 +1,188 @@
+import { useState, useEffect } from 'react';
+import Head from 'next/head';
+import Link from 'next/link';
+import { FaBox, FaUsers, FaFileUpload, FaCube, FaChartLine, FaWrench } from 'react-icons/fa';
+import Header from '@/components/Header';
+import Footer from '@/components/Footer';
+import AdminSidebar from '@/components/admin/AdminSidebar';
+import AdminOverview from '@/components/admin/AdminOverview';
+
+export default function AdminDashboard() {
+  // In a real app, you would check if the user is an admin here
+  // and redirect non-admin users
+  const [isAdmin, setIsAdmin] = useState(true);
+  const [stats, setStats] = useState({
+    totalOrders: 0,
+    pendingOrders: 0,
+    totalRevenue: 0,
+    totalUsers: 0,
+    totalProducts: 0,
+    totalUploads: 0,
+  });
+
+  useEffect(() => {
+    // In a real app, fetch these stats from the API
+    // This is mock data for demonstration
+    setStats({
+      totalOrders: 124,
+      pendingOrders: 18,
+      totalRevenue: 12850.75,
+      totalUsers: 87,
+      totalProducts: 52,
+      totalUploads: 213,
+    });
+  }, []);
+
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-red-600 mb-4">Access Denied</h1>
+          <p className="mb-4">You do not have permission to access this page.</p>
+          <Link href="/" className="btn btn-primary">
+            Return to Homepage
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <Head>
+        <title>Admin Dashboard | Laserkongen</title>
+        <meta name="description" content="Admin dashboard for Laserkongen." />
+      </Head>
+
+      <Header adminMode={true} />
+
+      <div className="flex-grow flex">
+        <AdminSidebar />
+        
+        <main className="flex-grow p-6 bg-gray-50 overflow-y-auto">
+          <h1 className="text-2xl font-bold mb-6">Dashboard</h1>
+          
+          <AdminOverview stats={stats} />
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+            <div className="card p-6">
+              <h2 className="text-xl font-bold mb-4">Recent Orders</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="px-4 py-2 text-left">Order ID</th>
+                      <th className="px-4 py-2 text-left">Customer</th>
+                      <th className="px-4 py-2 text-left">Status</th>
+                      <th className="px-4 py-2 text-right">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b">
+                      <td className="px-4 py-2">#ORD-1234</td>
+                      <td className="px-4 py-2">John Doe</td>
+                      <td className="px-4 py-2">
+                        <span className="inline-block px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">
+                          Processing
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right">$154.99</td>
+                    </tr>
+                    <tr className="border-b">
+                      <td className="px-4 py-2">#ORD-1233</td>
+                      <td className="px-4 py-2">Jane Smith</td>
+                      <td className="px-4 py-2">
+                        <span className="inline-block px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">
+                          Shipped
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right">$89.50</td>
+                    </tr>
+                    <tr className="border-b">
+                      <td className="px-4 py-2">#ORD-1232</td>
+                      <td className="px-4 py-2">Mike Johnson</td>
+                      <td className="px-4 py-2">
+                        <span className="inline-block px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">
+                          Delivered
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right">$212.75</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-4 text-right">
+                <Link href="/admin/orders" className="text-primary-600 hover:text-primary-800 text-sm font-medium">
+                  View All Orders →
+                </Link>
+              </div>
+            </div>
+            
+            <div className="card p-6">
+              <h2 className="text-xl font-bold mb-4">Recent Uploads</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-100">
+                      <th className="px-4 py-2 text-left">File ID</th>
+                      <th className="px-4 py-2 text-left">File Name</th>
+                      <th className="px-4 py-2 text-left">Type</th>
+                      <th className="px-4 py-2 text-left">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b">
+                      <td className="px-4 py-2">#FILE-789</td>
+                      <td className="px-4 py-2">robot.stl</td>
+                      <td className="px-4 py-2">3D Model</td>
+                      <td className="px-4 py-2">
+                        <span className="inline-block px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">
+                          Processed
+                        </span>
+                      </td>
+                    </tr>
+                    <tr className="border-b">
+                      <td className="px-4 py-2">#FILE-788</td>
+                      <td className="px-4 py-2">logo-engraving.svg</td>
+                      <td className="px-4 py-2">Vector</td>
+                      <td className="px-4 py-2">
+                        <span className="inline-block px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">
+                          Processed
+                        </span>
+                      </td>
+                    </tr>
+                    <tr className="border-b">
+                      <td className="px-4 py-2">#FILE-787</td>
+                      <td className="px-4 py-2">keychain.obj</td>
+                      <td className="px-4 py-2">3D Model</td>
+                      <td className="px-4 py-2">
+                        <span className="inline-block px-2 py-1 text-xs rounded-full bg-yellow-100 text-yellow-800">
+                          Processing
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-4 text-right">
+                <Link href="/admin/uploads" className="text-primary-600 hover:text-primary-800 text-sm font-medium">
+                  View All Uploads →
+                </Link>
+              </div>
+            </div>
+          </div>
+          
+          <div className="card p-6 mt-6">
+            <h2 className="text-xl font-bold mb-4">Monthly Revenue</h2>
+            <div className="h-64 flex items-center justify-center bg-gray-100 rounded">
+              {/* In a real app, you would use a chart library like Chart.js or Recharts */}
+              <p className="text-gray-500">Revenue chart would be displayed here</p>
+            </div>
+          </div>
+        </main>
+      </div>
+
+      <Footer />
+    </div>
+  );
+}

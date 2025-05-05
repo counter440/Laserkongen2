@@ -1,0 +1,17 @@
+[Unit]
+Description=Laserkongen Application
+After=network.target mysql.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=forking
+User=root
+WorkingDirectory=/root/Laserkongen/Laserkongen
+ExecStart=/bin/bash -c 'pkill -f "node backend/server.js" || true; pkill -f "next" || true; sleep 2; node backend/server.js > /root/Laserkongen/Laserkongen/backend.log 2>&1 & PORT=3002 npm run dev > /root/Laserkongen/Laserkongen/frontend.log 2>&1 &'
+Restart=always
+RestartSec=10
+KillMode=mixed
+TimeoutSec=60
+
+[Install]
+WantedBy=multi-user.target
